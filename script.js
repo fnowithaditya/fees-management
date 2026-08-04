@@ -1,3 +1,4 @@
+// FIREBASE CONFIGURATIONS
 const primaryConfig = {
     apiKey: "AIzaSyCFv0Pmc8a684gCO7e96pZF2dEma0Basr4",
     authDomain: "school-management-7570a.firebaseapp.com",
@@ -21,188 +22,805 @@ const db = appPrimary.firestore();
 const appSecondary = firebase.initializeApp(secondaryConfig, "Secondary");
 const dbSecondary = appSecondary.firestore();
 
-function showPage(p) {
-    document.querySelectorAll('.page-view').forEach(v => v.style.display = 'none');
-    document.getElementById(p + '-view').style.display = 'block';
-    document.querySelectorAll('.nav-link').forEach(n => n.classList.remove('active'));
-    if(event) event.currentTarget.classList.add('active');
-}
+let studentDetailsMap = {};
+let allStudentsList = [];
+let currentId = null;
+let currentDb = null;
+let currentStudentData = null;
+let generatedReceiptText = "";
 
-async function loadAllData() {
-    const tbody = document.getElementById('studentData');
-    if(!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">Loading Finance Data...</td></tr>';
-    let total = 0;
-
-    const fetchProj = async (database, label) => {
-        const snap = await database.collection("students").orderBy("name").get();
-        snap.forEach(doc => {
-            const s = doc.data();
-            total++;
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><b>${s.name}</b><br><small style="color:var(--text-dim)">${label}</small></td>
-                <td style="color:#f87171; font-weight:800">₹${s.amount || 0}</td>
-                <td><small>₹${s.lastPaidAmt || 0}</small><br><small style="font-size:10px">${s.lastPaymentDate || '-'}</small></td>
-                <td><button class="status-pill-ui ${s.isPaid ? 'paid' : 'pending'}" onclick="handleSmartPayment('${doc.id}', '${label}')">${s.isPaid ? 'PAID' : 'DUE'}</button></td>
-                <td><button class="btn-repair" onclick="openProfile('${doc.id}', '${label}')">View</button></td>
-            `;
-            tbody.appendChild(row);
-        });
-    };
-
-    tbody.innerHTML = '';
-    await fetchProj(db, "Main Project");
-    await fetchProj(dbSecondary, "External Project");
-    document.getElementById('stat-count').innerText = total;
-}
-
-// RESTORE FUNCTION: Adds students back from JSON
-async function restoreStudents() {
-    if(!confirm("Re-import all 150+ students from JSON?")) return;
-    const btn = event.target;
-    btn.innerText = "Restoring...";
+// LOAD CLASS & PHONE MAP FROM STUDENTS.JSON SAFELY
+async function loadClassMap() {
     try {
         const res = await fetch('./students.json');
+        if (!res.ok) throw new Error("JSON file response not ok");
         const data = await res.json();
-        const batch = dbSecondary.batch();
-        data.forEach(st => {
-            const docRef = dbSecondary.collection("students").doc();
-            batch.set(docRef, {
-                name: st.name.toUpperCase(), phone: st.phone || "000",
-                monthlyFee: 500, amount: 500, totalPaid: 0, lastPaidAmt: 0, isPaid: false
-            });
+        data.forEach(s => {
+            if (s && s.name) {
+                studentDetailsMap[s.name.toUpperCase()] = {
+                    class: s.class || "Unassigned",
+                    phone: s.phone || ""
+                };
+            }
         });
-        await batch.commit();
-        alert("Restoration Complete!");
-        loadAllData();
-    } catch (e) { alert("Error: " + e.message); }
-    btn.innerText = "⚠️ Restore Deleted Students";
+    } catch (e) {
+        console.warn("Could not load students.json map (Run on Live Server if testing locally):", e);
+    }
 }
 
-// SAFE SEARCH FUNCTION: Prevents 'toUpperCase' error
-function searchStudent() {
-    let input = document.getElementById('studentSearch').value.toLowerCase();
-    let rows = document.querySelectorAll("#studentData tr");
+function showPage(p) {
+    document.querySelectorAll('.page-view').forEach(v => v.style.display = 'none');
+    const target = document.getElementById(p + '-view');
+    if (target) target.style.display = 'block';
+    
+    document.querySelectorAll('.nav-link').forEach(n => n.classList.remove('active'));
+    if (window.event && window.event.currentTarget) {
+        window.event.currentTarget.classList.add('active');
+    }
+
+    if (p === 'admin') {
+        populateAdminStudentDropdown();
+    }
+}
+
+function getResolvedPhone(docPhone, jsonPhone) {
+    if (docPhone && docPhone !== "000" && String(docPhone).trim() !== "") return docPhone;
+    if (jsonPhone && jsonPhone !== "000" && String(jsonPhone).trim() !== "") return jsonPhone;
+    return "No Phone";
+}
+
+// FETCH & RENDER ALL DATA WITH BULLETPROOF ERROR HANDLING
+async function loadAllData() {
+    const tbody = document.getElementById('studentData');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">Loading Finance Data...</td></tr>';
+    
+    let totalCount = 0;
+    let totalDues = 0;
+    allStudentsList = [];
+
+    const fetchProj = async (database, label) => {
+        try {
+            const snap = await database.collection("students").get();
+            snap.forEach(doc => {
+                const s = doc.data() || {};
+                totalCount++;
+                
+                const dueAmt = Number(s.amount || 0);
+                totalDues += dueAmt;
+
+                const nameKey = String(s.name || "").toUpperCase();
+                const mappedInfo = studentDetailsMap[nameKey] || {};
+
+                const studentClass = s.class || mappedInfo.class || "Unassigned";
+                const studentPhone = getResolvedPhone(s.phone, mappedInfo.phone);
+
+                allStudentsList.push({
+                    id: doc.id,
+                    dbLabel: label,
+                    dbRef: database,
+                    name: s.name || 'Unnamed Student',
+                    class: studentClass,
+                    phone: studentPhone,
+                    monthlyFee: Number(s.monthlyFee || 0),
+                    amount: dueAmt,
+                    totalPaid: Number(s.totalPaid || 0),
+                    isPaid: s.isPaid || (dueAmt <= 0),
+                    lastPaidAmt: Number(s.lastPaidAmt || 0),
+                    lastPaymentDate: s.lastPaymentDate || '-',
+                    data: s
+                });
+            });
+        } catch (err) {
+            console.error(`Error loading from ${label}:`, err);
+        }
+    };
+
+    await fetchProj(db, "Main Project");
+    await fetchProj(dbSecondary, "External Project");
+
+    if (allStudentsList.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#f87171;">No records found or failed to connect to Firebase. Check internet connection.</td></tr>';
+        document.getElementById('stat-count').innerText = "0";
+        document.getElementById('stat-dues').innerText = "₹0";
+        return;
+    }
+
+    allStudentsList.sort((a, b) => a.name.localeCompare(b.name));
+
+    tbody.innerHTML = '';
+    allStudentsList.forEach(s => {
+        const row = document.createElement('tr');
+        row.setAttribute('data-name', s.name.toLowerCase());
+        row.setAttribute('data-class', s.class);
+
+        row.innerHTML = `
+            <td>
+                <b>${s.name}</b> <small style="color:var(--primary)">[${s.class}]</small><br>
+                <small style="color:var(--text-dim)">📞 ${s.phone}</small>
+            </td>
+            <td style="color:#f87171; font-weight:800">₹${s.amount}</td>
+            <td><small>₹${s.lastPaidAmt}</small><br><small style="font-size:10px; color:var(--text-dim)">${s.lastPaymentDate}</small></td>
+            <td>
+                <button class="status-pill-ui ${s.isPaid ? 'paid' : 'pending'}" onclick="quickPayToggle('${s.id}', '${s.dbLabel}')">
+                    ${s.isPaid ? 'PAID' : 'PAY DUE'}
+                </button>
+            </td>
+            <td><button class="btn-repair" onclick="openProfile('${s.id}', '${s.dbLabel}')">Manage</button></td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    document.getElementById('stat-count').innerText = totalCount;
+    document.getElementById('stat-dues').innerText = `₹${totalDues.toLocaleString('en-IN')}`;
+    
+    populateAdminStudentDropdown();
+}
+
+// QUICK PAYMENT TOGGLE (WITH CASH / UPI PROMPT)
+async function quickPayToggle(id, label) {
+    const targetDb = (label === "Main Project") ? db : dbSecondary;
+    const docRef = targetDb.collection("students").doc(id);
+    const doc = await docRef.get();
+    const s = doc.data() || {};
+
+    if (s.isPaid || s.amount <= 0) {
+        alert(`${s.name || 'Student'} is already fully paid.`);
+        return;
+    }
+
+    const payStr = prompt(`Quick Pay Dues for ${s.name}\nCurrent Due: ₹${s.amount}\nEnter amount paid:`, s.amount);
+    if (payStr === null) return;
+    const payAmt = Number(payStr);
+
+    if (isNaN(payAmt) || payAmt <= 0) {
+        alert("Invalid amount entered.");
+        return;
+    }
+
+    const methodChoice = prompt(`Payment method for ₹${payAmt}?\nType '1' for Cash\nType '2' for UPI\nType '3' for Bank Transfer`, "1");
+    let method = "Cash";
+    if (methodChoice === "2") method = "UPI";
+    else if (methodChoice === "3") method = "Bank Transfer";
+
+    const newDue = Math.max(0, (s.amount || 0) - payAmt);
+    const newTotalPaid = (s.totalPaid || 0) + payAmt;
+    const nowStr = new Date().toLocaleString('en-IN');
+
+    await docRef.update({
+        amount: newDue,
+        totalPaid: newTotalPaid,
+        lastPaidAmt: payAmt,
+        lastPaymentDate: nowStr,
+        isPaid: (newDue <= 0)
+    });
+
+    await docRef.collection("paymentHistory").add({
+        amountPaid: payAmt,
+        remainingDue: newDue,
+        note: `Quick Payment [${method}]`,
+        method: method,
+        date: nowStr,
+        type: "payment",
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    alert(`Payment of ₹${payAmt} via ${method} recorded!`);
+    loadAllData();
+}
+
+// FILTER & SEARCH LOGIC
+function filterStudents() {
+    const searchVal = document.getElementById('studentSearch').value.toLowerCase();
+    const classVal = document.getElementById('classFilter').value;
+    const rows = document.querySelectorAll("#studentData tr");
+
     rows.forEach(row => {
-        let nameElement = row.querySelector("td b");
-        if (nameElement) {
-            let name = nameElement.innerText.toLowerCase();
-            row.classList.toggle("hidden-row", !name.includes(input));
+        const name = row.getAttribute('data-name') || '';
+        const stClass = row.getAttribute('data-class') || '';
+
+        const matchesSearch = name.includes(searchVal);
+        const matchesClass = (classVal === 'ALL') || (stClass === classVal);
+
+        if (matchesSearch && matchesClass) {
+            row.classList.remove("hidden-row");
+        } else {
+            row.classList.add("hidden-row");
         }
     });
 }
 
-async function handleSmartPayment(id, label) {
-    const targetDb = (label === "Main Project") ? db : dbSecondary;
-    const docRef = targetDb.collection("students").doc(id);
-    const s = (await docRef.get()).data();
-    let payStr = prompt(`Recording payment for ${s.name}.\nDue: ₹${s.amount}\nEnter amount paid:`, s.amount);
-    if (payStr === null) return;
-    let payAmt = Number(payStr);
-    const newDue = (s.amount || 0) - payAmt;
-    const now = new Date().toLocaleString('en-IN');
+// REGISTER NEW STUDENT
+async function addStudentToFirebase() {
+    const name = document.getElementById('studentName').value.trim();
+    const phone = document.getElementById('parentPhone').value.trim();
+    const stClass = document.getElementById('studentClass').value;
+    const fee = Number(document.getElementById('feeAmount').value || 0);
+
+    if (!name) { alert("Student Name is required!"); return; }
+
+    try {
+        await db.collection("students").add({
+            name: name.toUpperCase(),
+            phone: phone || "0000000000",
+            class: stClass,
+            monthlyFee: fee,
+            amount: fee,
+            totalPaid: 0,
+            lastPaidAmt: 0,
+            isPaid: false,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        alert("Student Registered Successfully!");
+        document.getElementById('studentName').value = '';
+        document.getElementById('parentPhone').value = '';
+        document.getElementById('feeAmount').value = '';
+        showPage('dashboard');
+        loadAllData();
+    } catch (e) {
+        alert("Error: " + e.message);
+    }
+}
+
+// OPEN DASHBOARD QUICK PAYMENT & CUSTOM ENTRY MODAL
+async function openProfile(id, label) {
+    currentId = id; 
+    currentDb = (label === "Main Project") ? db : dbSecondary;
+    
+    const doc = await currentDb.collection("students").doc(id).get();
+    currentStudentData = doc.data() || {};
+
+    const nameKey = (currentStudentData.name || "").toUpperCase();
+    const mappedInfo = studentDetailsMap[nameKey] || {};
+
+    const studentClass = currentStudentData.class || mappedInfo.class || "Unassigned";
+    const studentPhone = getResolvedPhone(currentStudentData.phone, mappedInfo.phone);
+
+    currentStudentData.resolvedPhone = studentPhone;
+
+    document.getElementById('m-name').innerText = currentStudentData.name || "Student Profile";
+    document.getElementById('m-class-info').innerText = `Class: ${studentClass} | Phone: ${studentPhone} | Current Due: ₹${currentStudentData.amount || 0}`;
+    
+    document.getElementById('quick-pay-amt').value = '';
+    document.getElementById('quick-pay-note').value = '';
+    
+    if(document.getElementById('custom-entry-amt')) document.getElementById('custom-entry-amt').value = '';
+    if(document.getElementById('custom-entry-note')) document.getElementById('custom-entry-note').value = '';
+
+    document.getElementById('studentModal').style.display = 'flex';
+
+    fetchPaymentHistory(id, currentDb, 'history-timeline');
+}
+
+// ADD SPECIFIC CUSTOM ENTRY / FEE ADJUSTMENT
+async function addCustomStudentEntry() {
+    const type = document.getElementById('custom-entry-type').value;
+    const amt = Number(document.getElementById('custom-entry-amt').value);
+    const reason = document.getElementById('custom-entry-note').value.trim();
+
+    if (!amt || amt <= 0) {
+        alert("Please enter a valid amount.");
+        return;
+    }
+
+    if (!reason) {
+        alert("Please specify a reason (e.g. Exam Fee, Fine, Discount).");
+        return;
+    }
+
+    const currentDue = Number(currentStudentData.amount || 0);
+    const newDue = (type === 'add') ? (currentDue + amt) : Math.max(0, currentDue - amt);
+    const nowStr = new Date().toLocaleString('en-IN');
+
+    const docRef = currentDb.collection("students").doc(currentId);
+
     await docRef.update({
-        amount: Math.max(0, newDue),
-        totalPaid: (s.totalPaid || 0) + payAmt,
-        lastPaidAmt: payAmt,
-        lastPaymentDate: now,
+        amount: newDue,
         isPaid: (newDue <= 0)
     });
+
+    await docRef.collection("paymentHistory").add({
+        amountPaid: (type === 'add') ? `+₹${amt}` : `-₹${amt}`,
+        remainingDue: newDue,
+        note: ` ${reason}`,
+        date: nowStr,
+        type: "adjustment",
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    alert("Custom Entry Added Successfully!");
+    openProfile(currentId, currentDb === db ? "Main Project" : "External Project");
     loadAllData();
 }
 
-let currentId, currentDb;
-async function openProfile(id, label) {
-    currentId = id; currentDb = (label === "Main Project") ? db : dbSecondary;
-    const s = (await currentDb.collection("students").doc(id).get()).data();
-    document.getElementById('m-name').innerText = s.name;
-    document.getElementById('m-last-info').innerText = `Last Paid: ₹${s.lastPaidAmt || 0} on ${s.lastPaymentDate || 'N/A'}`;
-    document.getElementById('m-monthly-fee').value = s.monthlyFee || 0;
-    document.getElementById('m-due-amt').value = s.amount || 0;
-    document.getElementById('m-paid-amt').value = s.totalPaid || 0;
-    document.getElementById('studentModal').style.display = 'flex';
+// FETCH PAYMENT HISTORY TIMELINE
+async function fetchPaymentHistory(studentId, targetDb, targetContainerId, studentObj = null) {
+    const container = document.getElementById(targetContainerId);
+    if(!container) return;
+    container.innerHTML = '<small style="color:var(--text-dim)">Fetching log history...</small>';
+
+    try {
+        const snap = await targetDb.collection("students").doc(studentId)
+            .collection("paymentHistory")
+            .orderBy("timestamp", "desc")
+            .get();
+
+        if (snap.empty) {
+            container.innerHTML = '<small style="color:var(--text-dim)">No prior payment history logged.</small>';
+            return;
+        }
+
+        container.innerHTML = '';
+        snap.forEach(doc => {
+            const log = doc.data() || {};
+            const dateStr = log.date || (log.timestamp ? new Date(log.timestamp.toDate()).toLocaleDateString('en-IN') : '-');
+            const item = document.createElement('div');
+            item.className = `history-item ${log.type === 'adjustment' ? 'adjustment' : ''}`;
+            
+            let btnHtml = '';
+            if (studentObj) {
+                btnHtml = `
+                    <div style="display:inline-flex; gap:4px; margin-top:4px;">
+                        <button class="btn-repair" style="font-size:10px; padding:2px 6px;" onclick="generateReceipt('${encodeURIComponent(JSON.stringify(studentObj))}', '${encodeURIComponent(JSON.stringify(log))}', 'single')">📄 Single Entry Receipt</button>
+                        <button class="btn-repair" style="font-size:10px; padding:2px 6px; border-color:var(--primary); color:var(--primary);" onclick="generateReceipt('${encodeURIComponent(JSON.stringify(studentObj))}', '${encodeURIComponent(JSON.stringify(log))}', 'monthly')">📄 1-Month Fee Receipt</button>
+                    </div>
+                `;
+            }
+
+            item.innerHTML = `
+                <div>
+                    <b>₹${log.amountPaid}</b> <span style="font-size:11px; color:var(--text-dim)">(${log.note || 'Payment'})</span><br>
+                    <small style="font-size:10px; color:var(--text-dim)">Remaining Due: ₹${log.remainingDue}</small><br>
+                    ${btnHtml}
+                </div>
+                <small style="color:var(--text-dim)">${dateStr}</small>
+            `;
+            container.appendChild(item);
+        });
+    } catch (e) {
+        container.innerHTML = '<small style="color:#f87171">No logs found or unable to load history.</small>';
+    }
 }
 
-function closeModal() { document.getElementById('studentModal').style.display = 'none'; }
+// GENERATE RECEIPT CARD (SINGLE ENTRY vs 1-MONTH CONSOLIDATED STATEMENT)
+// GENERATE RECEIPT CARD (SINGLE ENTRY vs 1-MONTH CONSOLIDATED STATEMENT)
+// GENERATE RECEIPT CARD (SINGLE ENTRY vs ALL-ENTRIES STATEMENT)
+async function generateReceipt(encodedStudent, encodedLog, receiptType) {
+    const st = JSON.parse(decodeURIComponent(encodedStudent));
+    const log = JSON.parse(decodeURIComponent(encodedLog));
 
-async function saveStudentFees() {
-    const due = Number(document.getElementById('m-due-amt').value);
-    await currentDb.collection("students").doc(currentId).update({ 
-        monthlyFee: Number(document.getElementById('m-monthly-fee').value),
-        amount: due, totalPaid: Number(document.getElementById('m-paid-amt').value), isPaid: (due <= 0)
+    const txnId = 'LG-' + Math.floor(100000 + Math.random() * 900000);
+    const dateStr = log.date || new Date().toLocaleString('en-IN');
+    const now = new Date();
+    const monthYear = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+    if (receiptType === 'monthly') {
+        let historyLogs = [];
+        
+        // Ensure database reference is valid
+        const targetDb = (st.dbLabel === "Main Project") ? db : dbSecondary;
+
+        try {
+            // Fetch all payment logs for this student
+            const snap = await targetDb.collection("students").doc(st.id)
+                .collection("paymentHistory")
+                .orderBy("timestamp", "asc")
+                .get();
+
+            snap.forEach(d => {
+                const item = d.data();
+                if (item) historyLogs.push(item);
+            });
+        } catch (e) {
+            console.error("Error fetching logs for statement:", e);
+        }
+
+        let breakdownText = "";
+        let totalPaidThisMonth = 0;
+
+        if (historyLogs.length > 0) {
+            historyLogs.forEach((item, i) => {
+                const itemNote = item.note || 'Transaction';
+                const rawAmt = item.amountPaid;
+
+                // Sum up actual payments
+                if (typeof rawAmt === 'number') {
+                    totalPaidThisMonth += rawAmt;
+                } else if (typeof rawAmt === 'string' && !rawAmt.startsWith('+')) {
+                    const cleanNum = Number(rawAmt.replace(/[^0-9.-]+/g, ""));
+                    if (!isNaN(cleanNum)) totalPaidThisMonth += cleanNum;
+                }
+
+                breakdownText += `${i + 1}. ${itemNote}\n   Amount: ₹${rawAmt} | Date: ${item.date || dateStr}\n\n`;
+            });
+        } else {
+            breakdownText = `1. Payment Recorded: ₹${log.amountPaid} (${log.note || 'Fee Payment'})\n\n`;
+            if (typeof log.amountPaid === 'number') totalPaidThisMonth = log.amountPaid;
+        }
+
+        generatedReceiptText = 
+`==============================
+   LITTLE GARDEN SCHOOL
+    1-MONTH CONSOLIDATED STATEMENT
+==============================
+Statement Period : ${monthYear}
+Statement Ref    : ${txnId}
+Date Generated   : ${dateStr}
+Student Name     : ${st.name}
+Class            : ${st.class}
+Contact Phone    : ${st.phone}
+------------------------------
+Standard Tution Fee : ₹${st.monthlyFee}
+
+--- MONTHLY TRANSACTIONS LOG ---
+${breakdownText}------------------------------
+Total Paid This Month   : ₹${totalPaidThisMonth}
+Current Outstanding Due : ₹${st.amount}
+Account Status          : ${st.amount <= 0 ? 'PAID IN FULL (NO DUES)' : 'PENDING OUTSTANDING'}
+==============================
+Thank you for your fee payment!`;
+
+    } else {
+        // Single Entry Receipt
+        generatedReceiptText = 
+`==============================
+   LITTLE GARDEN SCHOOL
+    OFFICIAL FEE RECEIPT
+==============================
+Receipt ID : ${txnId}
+Date       : ${dateStr}
+Student    : ${st.name}
+Class      : ${st.class}
+Phone      : ${st.phone}
+------------------------------
+Particulars : ${log.note || 'Fee Payment'}
+Amount Paid : ₹${log.amountPaid}
+------------------------------
+Remaining Balance Due : ₹${log.remainingDue}
+Status                : ${log.remainingDue <= 0 ? 'PAID IN FULL' : 'BALANCE DUE'}
+==============================
+Thank you for your payment!`;
+    }
+
+    document.getElementById('receipt-preview-box').innerText = generatedReceiptText;
+    document.getElementById('receiptModal').style.display = 'flex';
+}function closeReceiptModal() {
+    document.getElementById('receiptModal').style.display = 'none';
+}
+
+// BULLETPROOF COPY RECEIPT FUNCTION
+function copyReceiptToClipboard() {
+    if (!generatedReceiptText) {
+        alert("No receipt content available to copy.");
+        return;
+    }
+
+    // Method 1: Modern Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(generatedReceiptText)
+            .then(() => {
+                alert("📋 Receipt text copied to clipboard!");
+            })
+            .catch(() => {
+                fallbackCopyText(generatedReceiptText);
+            });
+    } else {
+        // Method 2: Fallback for older browsers / non-HTTPS / WebViews
+        fallbackCopyText(generatedReceiptText);
+    }
+}
+
+// FALLBACK COPY MECHANISM
+function fallbackCopyText(text) {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    
+    // Make the textarea out of sight
+    textArea.style.position = "fixed";
+    textArea.style.left = "-999999px";
+    textArea.style.top = "-999999px";
+    document.body.appendChild(textArea);
+    
+    textArea.focus();
+    textArea.select();
+
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            // alert("📋 Receipt text copied to clipboard!");
+        } else {
+            alert("Unable to copy automatically. Please select text manually.");
+        }
+    } catch (err) {
+        alert("Copy failed: " + err);
+    }
+
+    document.body.removeChild(textArea);
+}
+
+// RECORD REGULAR MODAL PAYMENT
+async function recordNewPayment() {
+    const payAmt = Number(document.getElementById('quick-pay-amt').value);
+    const method = document.getElementById('quick-pay-method').value;
+    const note = document.getElementById('quick-pay-note').value.trim();
+
+    if (!payAmt || payAmt <= 0) {
+        alert("Please enter a valid payment amount.");
+        return;
+    }
+
+    const currentDue = Number(currentStudentData.amount || 0);
+    const newDue = Math.max(0, currentDue - payAmt);
+    const newTotalPaid = Number(currentStudentData.totalPaid || 0) + payAmt;
+    const nowStr = new Date().toLocaleString('en-IN');
+
+    const docRef = currentDb.collection("students").doc(currentId);
+
+    await docRef.update({
+        amount: newDue,
+        totalPaid: newTotalPaid,
+        lastPaidAmt: payAmt,
+        lastPaymentDate: nowStr,
+        isPaid: (newDue <= 0)
     });
-    closeModal(); loadAllData();
+
+    const fullNote = note ? `${note} [${method}]` : `Payment [${method}]`;
+
+    await docRef.collection("paymentHistory").add({
+        amountPaid: payAmt,
+        remainingDue: newDue,
+        note: fullNote,
+        method: method,
+        date: nowStr,
+        type: "payment",
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    alert("Payment recorded successfully!");
+    openProfile(currentId, currentDb === db ? "Main Project" : "External Project");
+    loadAllData();
 }
 
-async function runMonthlyBilling() {
-    if(!confirm("Add monthly fee to EVERY student's due amount?")) return;
+function closeModal() { 
+    document.getElementById('studentModal').style.display = 'none'; 
+}
+
+// --- ADMIN PANEL FUNCTIONS ---
+
+function populateAdminStudentDropdown() {
+    const select = document.getElementById('adminStudentSelect');
+    if (!select) return;
+    select.innerHTML = '<option value="">-- Choose Student --</option>';
+
+    allStudentsList.forEach((st, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.innerText = `${st.name} (${st.class})`;
+        select.appendChild(opt);
+    });
+}
+
+function loadStudentToAdminEditor() {
+    const idx = document.getElementById('adminStudentSelect').value;
+    const card = document.getElementById('adminEditorCard');
+
+    if (idx === "") {
+        card.style.display = 'none';
+        return;
+    }
+
+    const st = allStudentsList[idx];
+    document.getElementById('admin-editor-title').innerText = `Editing: ${st.name}`;
+    document.getElementById('admin-phone').value = st.phone === "No Phone" ? "" : st.phone;
+    document.getElementById('admin-class').value = st.class;
+    document.getElementById('admin-monthly-fee').value = st.monthlyFee;
+    document.getElementById('admin-due-amt').value = st.amount;
+    document.getElementById('admin-paid-amt').value = st.totalPaid;
+
+    card.style.display = 'block';
+
+    fetchPaymentHistory(st.id, st.dbRef, 'admin-history-timeline', st);
+}
+
+async function saveAdminStudentUpdates() {
+    const idx = document.getElementById('adminStudentSelect').value;
+    if (idx === "") return;
+
+    const st = allStudentsList[idx];
+    const phone = document.getElementById('admin-phone').value.trim();
+    const stClass = document.getElementById('admin-class').value.trim();
+    const monthlyFee = Number(document.getElementById('admin-monthly-fee').value);
+    const due = Number(document.getElementById('admin-due-amt').value);
+    const totalPaid = Number(document.getElementById('admin-paid-amt').value);
+
+    await st.dbRef.collection("students").doc(st.id).update({
+        phone: phone || "0000000000",
+        class: stClass || "Unassigned",
+        monthlyFee: monthlyFee,
+        amount: due,
+        totalPaid: totalPaid,
+        isPaid: (due <= 0)
+    });
+
+    alert("Student profile updated successfully in Admin Panel!");
+    await loadAllData();
+    showPage('admin');
+}
+
+async function deleteStudentHistoryAdmin() {
+    const idx = document.getElementById('adminStudentSelect').value;
+    if (idx === "") return;
+    const st = allStudentsList[idx];
+
+    if (!confirm(`Are you sure you want to clear payment history logs for ${st.name}?`)) return;
+
+    try {
+        const snap = await st.dbRef.collection("students").doc(st.id).collection("paymentHistory").get();
+        const batch = st.dbRef.batch();
+        snap.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        alert("Student payment history logs cleared!");
+        fetchPaymentHistory(st.id, st.dbRef, 'admin-history-timeline', st);
+    } catch (e) {
+        alert("Error clearing history: " + e.message);
+    }
+}
+
+async function deleteStudentAdmin() {
+    const idx = document.getElementById('adminStudentSelect').value;
+    if (idx === "") return;
+    const st = allStudentsList[idx];
+
+    if (!confirm(`⚠️ PERMANENT ACTION: Delete ${st.name} from database?`)) return;
+
+    try {
+        const snap = await st.dbRef.collection("students").doc(st.id).collection("paymentHistory").get();
+        const batch = st.dbRef.batch();
+        snap.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+
+        await st.dbRef.collection("students").doc(st.id).delete();
+        alert("Student permanently deleted.");
+        
+        document.getElementById('adminEditorCard').style.display = 'none';
+        await loadAllData();
+        showPage('admin');
+    } catch (e) {
+        alert("Error deleting student: " + e.message);
+    }
+}
+
+// CLASS-WISE MONTHLY BILLING
+function openBillingModal() { document.getElementById('billingModal').style.display = 'flex'; }
+function closeBillingModal() { document.getElementById('billingModal').style.display = 'none'; }
+
+async function executeMonthlyBilling() {
+    const targetClass = document.getElementById('billingClassTarget').value;
+    const confirmMsg = targetClass === "ALL" 
+        ? "Add monthly fee to EVERY student in the school?" 
+        : `Add monthly fee ONLY to students in ${targetClass}?`;
+
+    if (!confirm(confirmMsg)) return;
+
     const projects = [db, dbSecondary];
+    let updatedCount = 0;
+
     for (const p of projects) {
         const snap = await p.collection("students").get();
         const batch = p.batch();
+        
         snap.forEach(doc => {
-            const s = doc.data();
-            batch.update(doc.ref, { amount: (s.amount || 0) + (s.monthlyFee || 0), isPaid: false });
+            const s = doc.data() || {};
+            const nameKey = (s.name || "").toUpperCase();
+            const mappedInfo = studentDetailsMap[nameKey] || {};
+            const stClass = s.class || mappedInfo.class || "Unassigned";
+
+            if (targetClass === "ALL" || stClass === targetClass) {
+                batch.update(doc.ref, { 
+                    amount: (s.amount || 0) + (s.monthlyFee || 0), 
+                    isPaid: false 
+                });
+                updatedCount++;
+            }
         });
         await batch.commit();
     }
+
+    alert(`Monthly billing applied to ${updatedCount} students (${targetClass}).`);
+    closeBillingModal();
     loadAllData();
 }
 
-window.onload = loadAllData;
+// EXPORT TO SHEETS
+async function exportStudentsToCSV() {
+    try {
+        const fetchStudentsFromDb = async (database, label) => {
+            const snap = await database.collection("students").get();
+            const list = [];
+            snap.forEach(doc => {
+                const s = doc.data() || {};
+                const nameKey = (s.name || "").toUpperCase();
+                const mappedInfo = studentDetailsMap[nameKey] || {};
+                const phone = getResolvedPhone(s.phone, mappedInfo.phone);
 
+                list.push({
+                    name: s.name || "N/A",
+                    class: s.class || mappedInfo.class || "Unassigned",
+                    phone: phone,
+                    monthlyFee: s.monthlyFee || 0,
+                    dueAmount: s.amount || 0,
+                    totalPaid: s.totalPaid || 0,
+                    status: s.isPaid ? "PAID" : "DUE",
+                    source: label
+                });
+            });
+            return list;
+        };
 
+        const mainStudents = await fetchStudentsFromDb(db, "Main Project");
+        const secondaryStudents = await fetchStudentsFromDb(dbSecondary, "External Project");
+        const all = [...mainStudents, ...secondaryStudents];
 
+        all.sort((a, b) => {
+            const classComp = a.class.localeCompare(b.class);
+            if (classComp !== 0) return classComp;
+            return a.name.localeCompare(b.name);
+        });
 
+        const headers = ["Class", "Student Name", "Phone Number", "Monthly Fee (INR)", "Due Amount (INR)", "Total Paid (INR)", "Status", "Database"];
+        const rows = [headers.join(",")];
 
+        all.forEach(s => {
+            rows.push([
+                `"${s.class}"`,
+                `"${s.name.replace(/"/g, '""')}"`,
+                `"${s.phone}"`,
+                s.monthlyFee,
+                s.dueAmount,
+                s.totalPaid,
+                `"${s.status}"`,
+                `"${s.source}"`
+            ].join(","));
+        });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// --- NEW: INVOICE SENDING LOGIC ---
-
-function generateInvoiceMessage(student) {
-    const date = new Date().toLocaleDateString('en-IN');
-    return `*Little Garden BILL SUMMARY*%0A--------------------------%0A*Student:* ${student.name}%0A*Date:* ${date}%0A*Monthly Fee:* ₹${student.monthlyFee}%0A*Total Due:* ₹${student.amount}%0A--------------------------%0APlease settle the dues at the earliest.%0A_Thank you!_`;
+        const blob = new Blob([rows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `Little_Garden_ClassWise_Report_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } catch (e) {
+        alert("Export Error: " + e.message);
+    }
 }
 
-async function sendInvoice(type) {
-    // currentId and currentDb are set when you open the modal
-    const doc = await currentDb.collection("students").doc(currentId).get();
-    const s = doc.data();
+// INVOICE SENDING LOGIC
+function sendInvoice(type) {
+    if (!currentStudentData) return;
+    const s = currentStudentData;
+    const phone = s.resolvedPhone || s.phone;
     
-    if (!s.phone || s.phone === "000" || s.phone.length < 10) {
+    if (!phone || phone === "No Phone" || phone.length < 10) {
         alert("Invalid phone number found for this student.");
         return;
     }
 
-    const message = generateInvoiceMessage(s);
-    const phone = s.phone.startsWith('91') ? s.phone : '91' + s.phone;
+    const date = new Date().toLocaleDateString('en-IN');
+    const msg = `*Little Garden BILL SUMMARY*%0A--------------------------%0A*Student:* ${s.name}%0A*Date:* ${date}%0A*Monthly Fee:* ₹${s.monthlyFee || 0}%0A*Total Due:* ₹${s.amount || 0}%0A--------------------------%0APlease settle the dues at the earliest.%0A_Thank you!_`;
+    const formattedPhone = phone.startsWith('91') ? phone : '91' + phone;
 
     if (type === 'whatsapp') {
-        // Opens WhatsApp with pre-filled text
-        window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+        window.open(`https://wa.me/${formattedPhone}?text=${msg}`, '_blank');
     } else {
-        // Opens default SMS app (replaces * with spaces for SMS compatibility)
-        const smsMsg = message.replace(/\*/g, '').replace(/%0A/g, '\n');
-        window.location.href = `sms:${phone}?body=${encodeURIComponent(smsMsg)}`;
+        const smsMsg = msg.replace(/\*/g, '').replace(/%0A/g, '\n');
+        window.location.href = `sms:${formattedPhone}?body=${encodeURIComponent(smsMsg)}`;
     }
 }
+
+// INITIALIZATION
+window.onload = async () => {
+    await loadClassMap();
+    await loadAllData();
+};
