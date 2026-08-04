@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Little Garden Payments</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glow-orb" id="orb-1"></div>
+    <div class="glow-orb" id="orb-2"></div>
+
+    <nav class="glass-nav">
+        <div class="nav-content">
+            <div class="brand">Little<span>Garden</span></div>
+            <div class="nav-links">
+                <button class="nav-link active" onclick="showPage('dashboard')">HOME</button>
+                <button class="nav-link" onclick="showPage('students')">Add Student</button>
+            </div>
+            <div class="status-pill"><span class="pulse"></span> Admin Panel</div>
+        </div>
+    </nav>
+
+    <main class="app-container">
+        <div id="dashboard-view" class="page-view">
+            <div class="stats-grid">
+                <div class="glass-card stat-item">
+                    <small>Active Records</small>
+                    <h2 id="stat-count">0</h2>
+                    <!-- <button class="btn-restore" onclick="restoreStudents()">⚠️ Restore Deleted Students</button> -->
+                </div>
+                <div class="glass-card stat-item">
+                    <small>Billing Actions</small>
+                    <button class="btn-action" style="background:#f59e0b; margin-top:10px; width:100%;" onclick="runMonthlyBilling()">+ Generate Monthly Bills</button>
+                </div>
+            </div>
+
+            <section class="glass-card" style="padding: 15px;">
+                <input type="text" id="studentSearch" placeholder="Search student name..." onkeyup="searchStudent()" style="width: 95%;">
+            </section>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Student</th>
+                            <th>Due</th>
+                            <th>Last Paid</th>
+                            <th>Status</th>
+                            <th>Manage</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentData"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="students-view" class="page-view" style="display:none;">
+            <div class="glass-card">
+                <h3>New Student Enrollment</h3>
+                <div class="input-stack" style="display:flex; flex-direction:column; gap:15px; margin-top:15px;">
+                    <input type="text" id="studentName" placeholder="Full Name">
+                    <input type="tel" id="parentPhone" placeholder="Phone Number">
+                    <input type="number" id="feeAmount" placeholder="Monthly Fee (₹)">
+                    <button class="btn-action" onclick="addStudentToFirebase()">Register Student</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="studentModal" class="modal-overlay" style="display:none;">
+        <div class="glass-card modal-content">
+            <h2 id="m-name">Student Name</h2>
+            <p id="m-last-info" style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 10px;"></p>
+            <div class="modal-grid">
+                <div class="m-box"><small>Monthly Fee</small><input type="number" id="m-monthly-fee"></div>
+                <div class="m-box"><small>Due Fees</small><input type="number" id="m-due-amt" style="color:#f87171"></div>
+                <div class="m-box" style="grid-column: span 2;"><small>Total Paid Fees</small><input type="number" id="m-paid-amt" style="color:var(--accent); width: 90%;"></div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn-action" style="flex:1" onclick="saveStudentFees()">Save</button>
+                <button class="btn-repair" style="flex:1" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
