@@ -450,7 +450,7 @@ Student Name     : ${st.name}
 Class            : ${st.class}
 Contact Phone    : ${st.phone}
 ------------------------------
-Standard Tution Fee : ₹${st.monthlyFee}
+Standard Tuition Fee : ₹${st.monthlyFee}
 
 --- MONTHLY TRANSACTIONS LOG ---
 ${breakdownText}------------------------------
