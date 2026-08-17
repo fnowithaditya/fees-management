@@ -17,24 +17,27 @@
             <div class="brand" style="font-size: 1.8rem; margin-bottom: 10px;">Little<span>Garden</span></div>
             <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 20px;">Admin Access Restricted. Please log in.</p>
             
-            <div class="input-stack" style="display: flex; flex-direction: column; gap: 12px;">
-                <input type="email" id="loginEmail" placeholder="Admin Email" style="width: 100%;">
-                <input type="password" id="loginPassword" placeholder="Password" style="width: 100%;">
-                <button class="btn-action btn-primary" onclick="handleAdminLogin()" style="margin-top: 10px;">Log In</button>
-            </div>
+            <form id="loginForm" onsubmit="handleAdminLogin(event)">
+                <div class="input-stack" style="display: flex; flex-direction: column; gap: 12px;">
+                    <input type="email" id="loginEmail" placeholder="Admin Email" required style="width: 100%;">
+                    <input type="password" id="loginPassword" placeholder="Password" required style="width: 100%;">
+                    <button type="submit" class="btn-action btn-primary" style="margin-top: 10px; width: 100%;">Log In</button>
+                </div>
+            </form>
             <p id="loginError" style="color: #f87171; font-size: 0.75rem; margin-top: 12px; display: none;"></p>
         </div>
     </div>
 
+    <!-- MAIN APP NAVIGATION -->
     <nav class="glass-nav">
         <div class="nav-content">
             <div class="brand">Little<span>Garden</span></div>
             <div class="nav-links">
-                <button class="nav-link active" onclick="showPage('dashboard')">Dashboard</button>
-                <button class="nav-link" onclick="showPage('students')">+ Add Student</button>
+                <button class="nav-link active" data-page="dashboard" onclick="showPage('dashboard')">Dashboard</button>
+                <button class="nav-link" data-page="students" onclick="showPage('students')">+ Add Student</button>
                 <button class="nav-link" onclick="handleAdminLogout()" style="color: #f87171;">🚪 Logout</button>
             </div>
-            <button class="status-pill nav-link" onclick="showPage('admin')" style="cursor: pointer;">
+            <button class="status-pill nav-link" data-page="admin" onclick="showPage('admin')" style="cursor: pointer;">
                 <span class="pulse"></span> ⚙️ Admin Panel
             </button>
         </div>
@@ -57,8 +60,8 @@
             <!-- CONTROLS & ACTIONS CARD -->
             <div class="glass-card actions-bar">
                 <div class="action-buttons">
-                    <button class="btn-action btn-warning" onclick="openBillingModal()">⚡ Generate Monthly Bills</button>
-                    <button class="btn-action btn-success" onclick="exportStudentsToCSV()">📊 Export Class-Wise (Sheets)</button>
+                    <button class="btn-action btn-warning" onclick="openBillingModal()">Generate Monthly Fees</button>
+                    <button class="btn-action btn-success" onclick="exportStudentsToCSV()">📊 Export to Sheets</button>
                 </div>
             </div>
 
@@ -103,21 +106,23 @@
         <div id="students-view" class="page-view" style="display:none;">
             <div class="glass-card">
                 <h3>New Student Enrollment</h3>
-                <div class="input-stack">
-                    <input type="text" id="studentName" placeholder="Full Student Name">
-                    <input type="tel" id="parentPhone" placeholder="Phone Number (e.g. 9876543210)">
-                    <select id="studentClass">
-                        <option value="Nursery">Nursery</option>
-                        <option value="Lkg">LKG</option>
-                        <option value="Ukg">UKG</option>
-                        <option value="First">1st Grade</option>
-                        <option value="Second">2nd Grade</option>
-                        <option value="Third">3rd Grade</option>
-                        <option value="Fourth">4th Grade</option>
-                    </select>
-                    <input type="number" id="feeAmount" placeholder="Monthly Fee (₹)">
-                    <button class="btn-action btn-primary" onclick="addStudentToFirebase()">Register Student</button>
-                </div>
+                <form id="addStudentForm" onsubmit="addStudentToFirebase(event)">
+                    <div class="input-stack">
+                        <input type="text" id="studentName" placeholder="Full Student Name" required>
+                        <input type="tel" id="parentPhone" placeholder="Phone Number (e.g. 9876543210)" required>
+                        <select id="studentClass" required>
+                            <option value="Nursery">Nursery</option>
+                            <option value="Lkg">LKG</option>
+                            <option value="Ukg">UKG</option>
+                            <option value="First">1st Grade</option>
+                            <option value="Second">2nd Grade</option>
+                            <option value="Third">3rd Grade</option>
+                            <option value="Fourth">4th Grade</option>
+                        </select>
+                        <input type="number" id="feeAmount" placeholder="Monthly Fee (₹)" min="0" required>
+                        <button type="submit" class="btn-action btn-primary">Register Student</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -125,7 +130,7 @@
         <div id="admin-view" class="page-view" style="display:none;">
             <div class="glass-card">
                 <h3>⚙️ Admin Management Panel</h3>
-                <p style="font-size: 0.8rem; color: var(--text-dim);">Select a student below to modify profiles, generate copyable receipts (Single Entry & 1-Month Consolidated), clear history, or delete entries.</p>
+                <p style="font-size: 0.8rem; color: var(--text-dim);">Select a student below to modify profiles, generate receipts, or delete records.</p>
                 
                 <div style="margin-top: 15px;">
                     <label style="font-size: 0.75rem; color: var(--text-dim); font-weight:700;">SELECT STUDENT TO EDIT:</label>
@@ -136,7 +141,7 @@
             </div>
 
             <!-- ADMIN EDITOR CARD -->
-            <div id="adminEditorCard" class="glass-card" style="display:none;">
+            <div id="adminEditorCard" class="glass-card" style="display:none; margin-top: 15px;">
                 <h4 id="admin-editor-title">Edit Student Profile</h4>
                 
                 <div class="modal-grid" style="margin-top: 15px;">
@@ -175,14 +180,13 @@
                 </div>
 
                 <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
-                    <button class="btn-action btn-warning" onclick="deleteStudentHistoryAdmin()">📜 Clear All Payment Logs</button>
                     <button class="btn-action" style="background:#ef4444;" onclick="deleteStudentAdmin()">🗑️ Permanently Delete Student</button>
                 </div>
             </div>
         </div>
     </main>
 
-    <!-- RECEIPT MODAL -->
+    <!-- OFFICIAL RECEIPT MODAL -->
     <div id="receiptModal" class="modal-overlay" style="display:none;">
         <div class="glass-card modal-content" style="max-width:420px;">
             <div class="modal-header">
@@ -220,44 +224,44 @@
             <div class="quick-pay-section">
                 <h4>Record New Payment</h4>
                 <div class="quick-pay-flex">
-                    <input type="number" id="quick-pay-amt" placeholder="Amount Paid (₹)">
+                    <input type="number" id="quick-pay-amt" placeholder="Amount Paid (₹)" min="1">
                     <select id="quick-pay-method" style="padding:10px;">
                         <option value="Cash">Cash</option>
                         <option value="UPI">UPI</option>
                         <option value="Bank Transfer">Bank Transfer</option>
                     </select>
                 </div>
-                <div class="quick-pay-flex" style="grid-template-columns: 2fr 1fr; margin-top:8px;">
-                    <input type="text" id="quick-pay-note" placeholder="Note (e.g. Aug Fee / Txn Ref)">
+                <div class="quick-pay-flex" style="grid-template-columns: 2fr 1fr; margin-top:8px; display: grid; gap: 8px;">
+                    <input type="text" id="quick-pay-note" placeholder="Note (e.g. Aug Fee / Ref No)">
                     <button class="btn-action btn-success" onclick="recordNewPayment()">Collect</button>
                 </div>
             </div>
 
             <!-- SPECIFIC CUSTOM ENTRY / FEE ADJUSTMENT SECTION -->
             <div class="quick-pay-section" style="background: rgba(99, 102, 241, 0.05); border-color: rgba(99, 102, 241, 0.3);">
-                <h4 style="color: var(--primary);">➕ Specific Custom Entry / Fee Adjustment</h4>
-                <div class="quick-pay-flex" style="grid-template-columns: 1fr 1fr auto;">
+                <h4 style="color: var(--primary);">➕ Fee Adjustment / Discount</h4>
+                <div class="quick-pay-flex" style="grid-template-columns: 1fr 1fr; display: grid; gap: 8px;">
                     <select id="custom-entry-type" style="padding:10px;">
                         <option value="add">+ Add Fee (Due Increase)</option>
                         <option value="subtract">- Discount (Due Decrease)</option>
                     </select>
-                    <input type="number" id="custom-entry-amt" placeholder="Amount (₹)">
+                    <input type="number" id="custom-entry-amt" placeholder="Amount (₹)" min="1">
                 </div>
-                <div class="quick-pay-flex" style="grid-template-columns: 2fr 1fr; margin-top:8px;">
+                <div class="quick-pay-flex" style="grid-template-columns: 2fr 1fr; margin-top:8px; display: grid; gap: 8px;">
                     <input type="text" id="custom-entry-note" placeholder="Reason (e.g. Exam Fee, Books, Fine)">
                     <button class="btn-action btn-primary" onclick="addCustomStudentEntry()">Add Entry</button>
                 </div>
             </div>
 
             <!-- PAYMENT HISTORY TIMELINE -->
-            <div class="history-section">
+            <div class="history-section" style="margin-top: 16px;">
                 <h4 style="margin: 0 0 8px 0;">📜 Payment History Log</h4>
                 <div id="history-timeline" class="history-timeline">
                     <small>Loading history...</small>
                 </div>
             </div>
 
-            <div class="modal-footer">
+            <div class="modal-footer" style="margin-top: 16px;">
                 <button class="btn-repair" style="width:100%; padding: 12px;" onclick="closeModal()">Close Window</button>
             </div>
         </div>
@@ -270,13 +274,13 @@
                 <h3>Generate Monthly Bills</h3>
                 <button class="close-btn" onclick="closeBillingModal()">&times;</button>
             </div>
-            <p style="font-size:0.8rem; color:var(--text-dim); margin-top:-10px;">Select target class and specify the fee amount to add to each student's due balance:</p>
+            <p style="font-size:0.8rem; color:var(--text-dim); margin-top:-10px;">Select class and specify custom amount (or leave blank to use assigned monthly fees):</p>
 
             <div class="input-stack">
                 <div>
                     <label style="font-size: 0.75rem; color: var(--text-dim); font-weight:700;">TARGET CLASS:</label>
                     <select id="billingClassTarget" style="margin-top: 4px;">
-                        <option value="ALL">⚡ All Classes (Whole School)</option>
+                        <option value="ALL">All Classes (Whole School)</option>
                         <option value="Nursery">Nursery</option>
                         <option value="Lkg">LKG</option>
                         <option value="Ukg">UKG</option>
@@ -288,8 +292,8 @@
                 </div>
 
                 <div>
-                    <label style="font-size: 0.75rem; color: var(--text-dim); font-weight:700;">MONTHLY FEE TO APPLY (₹):</label>
-                    <input type="number" id="billingCustomFee" placeholder="Leave blank for student's default fee" style="margin-top: 4px;">
+                    <label style="font-size: 0.75rem; color: var(--text-dim); font-weight:700;">OPTIONAL OVERRIDE FEE (₹):</label>
+                    <input type="number" id="billingCustomFee" placeholder="Leave empty to use base fee" style="margin-top: 4px;">
                 </div>
 
                 <button class="btn-action btn-warning" onclick="executeMonthlyBilling()" style="margin-top: 10px;">Apply Monthly Fee</button>
