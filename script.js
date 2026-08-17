@@ -19,6 +19,8 @@ const secondaryConfig = {
 
 const appPrimary = firebase.initializeApp(primaryConfig);
 const db = appPrimary.firestore();
+const auth = appPrimary.auth();
+
 const appSecondary = firebase.initializeApp(secondaryConfig, "Secondary");
 const dbSecondary = appSecondary.firestore();
 
@@ -28,6 +30,45 @@ let currentId = null;
 let currentDb = null;
 let currentStudentData = null;
 let generatedReceiptText = "";
+
+// --- FIREBASE AUTHENTICATION MANAGER ---
+auth.onAuthStateChanged(user => {
+    const loginOverlay = document.getElementById('loginOverlay');
+    if (user) {
+        if (loginOverlay) loginOverlay.style.display = 'none';
+        loadClassMap();
+        loadAllData();
+    } else {
+        if (loginOverlay) loginOverlay.style.display = 'flex';
+    }
+});
+
+async function handleAdminLogin() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const pass = document.getElementById('loginPassword').value.trim();
+    const errText = document.getElementById('loginError');
+
+    if (!email || !pass) {
+        errText.innerText = "Please enter both email and password.";
+        errText.style.display = "block";
+        return;
+    }
+
+    try {
+        errText.style.display = "none";
+        await auth.signInWithEmailAndPassword(email, pass);
+    } catch (e) {
+        errText.innerText = "Login Failed: " + e.message;
+        errText.style.display = "block";
+    }
+}
+
+async function handleAdminLogout() {
+    if (confirm("Are you sure you want to log out?")) {
+        await auth.signOut();
+        window.location.reload();
+    }
+}
 
 // LOAD CLASS & PHONE MAP FROM STUDENTS.JSON SAFELY
 async function loadClassMap() {
@@ -322,7 +363,7 @@ async function addCustomStudentEntry() {
     await docRef.collection("paymentHistory").add({
         amountPaid: (type === 'add') ? `+₹${amt}` : `-₹${amt}`,
         remainingDue: newDue,
-        note: ` ${reason}`,
+        note: `[Custom Entry] ${reason}`,
         date: nowStr,
         type: "adjustment",
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
@@ -382,8 +423,6 @@ async function fetchPaymentHistory(studentId, targetDb, targetContainerId, stude
     }
 }
 
-// GENERATE RECEIPT CARD (SINGLE ENTRY vs 1-MONTH CONSOLIDATED STATEMENT)
-// GENERATE RECEIPT CARD (SINGLE ENTRY vs 1-MONTH CONSOLIDATED STATEMENT)
 // GENERATE RECEIPT CARD (SINGLE ENTRY vs ALL-ENTRIES STATEMENT)
 async function generateReceipt(encodedStudent, encodedLog, receiptType) {
     const st = JSON.parse(decodeURIComponent(encodedStudent));
@@ -396,12 +435,9 @@ async function generateReceipt(encodedStudent, encodedLog, receiptType) {
 
     if (receiptType === 'monthly') {
         let historyLogs = [];
-        
-        // Ensure database reference is valid
         const targetDb = (st.dbLabel === "Main Project") ? db : dbSecondary;
 
         try {
-            // Fetch all payment logs for this student
             const snap = await targetDb.collection("students").doc(st.id)
                 .collection("paymentHistory")
                 .orderBy("timestamp", "asc")
@@ -423,7 +459,6 @@ async function generateReceipt(encodedStudent, encodedLog, receiptType) {
                 const itemNote = item.note || 'Transaction';
                 const rawAmt = item.amountPaid;
 
-                // Sum up actual payments
                 if (typeof rawAmt === 'number') {
                     totalPaidThisMonth += rawAmt;
                 } else if (typeof rawAmt === 'string' && !rawAmt.startsWith('+')) {
@@ -461,7 +496,6 @@ Account Status          : ${st.amount <= 0 ? 'PAID IN FULL (NO DUES)' : 'PENDING
 Thank you for your fee payment!`;
 
     } else {
-        // Single Entry Receipt
         generatedReceiptText = 
 `==============================
    LITTLE GARDEN SCHOOL
@@ -484,7 +518,9 @@ Thank you for your payment!`;
 
     document.getElementById('receipt-preview-box').innerText = generatedReceiptText;
     document.getElementById('receiptModal').style.display = 'flex';
-}function closeReceiptModal() {
+}
+
+function closeReceiptModal() {
     document.getElementById('receiptModal').style.display = 'none';
 }
 
@@ -495,7 +531,6 @@ function copyReceiptToClipboard() {
         return;
     }
 
-    // Method 1: Modern Clipboard API
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(generatedReceiptText)
             .then(() => {
@@ -505,17 +540,13 @@ function copyReceiptToClipboard() {
                 fallbackCopyText(generatedReceiptText);
             });
     } else {
-        // Method 2: Fallback for older browsers / non-HTTPS / WebViews
         fallbackCopyText(generatedReceiptText);
     }
 }
 
-// FALLBACK COPY MECHANISM
 function fallbackCopyText(text) {
     const textArea = document.createElement("textarea");
     textArea.value = text;
-    
-    // Make the textarea out of sight
     textArea.style.position = "fixed";
     textArea.style.left = "-999999px";
     textArea.style.top = "-999999px";
@@ -527,7 +558,7 @@ function fallbackCopyText(text) {
     try {
         const successful = document.execCommand('copy');
         if (successful) {
-            // alert("📋 Receipt text copied to clipboard!");
+            alert("📋 Receipt text copied to clipboard!");
         } else {
             alert("Unable to copy automatically. Please select text manually.");
         }
@@ -690,45 +721,67 @@ async function deleteStudentAdmin() {
     }
 }
 
-// CLASS-WISE MONTHLY BILLING
-function openBillingModal() { document.getElementById('billingModal').style.display = 'flex'; }
-function closeBillingModal() { document.getElementById('billingModal').style.display = 'none'; }
+// CLASS-WISE MONTHLY BILLING WITH CUSTOM FEE SUPPORT
+function openBillingModal() {
+    const customFeeInput = document.getElementById('billingCustomFee');
+    if (customFeeInput) customFeeInput.value = '';
+    document.getElementById('billingModal').style.display = 'flex';
+}
+
+function closeBillingModal() {
+    document.getElementById('billingModal').style.display = 'none';
+}
 
 async function executeMonthlyBilling() {
     const targetClass = document.getElementById('billingClassTarget').value;
+    const customFeeInput = document.getElementById('billingCustomFee').value.trim();
+    const customFeeNum = Number(customFeeInput);
+
+    const isCustom = customFeeInput !== "" && !isNaN(customFeeNum) && customFeeNum > 0;
+    
+    const feeDescription = isCustom 
+        ? `₹${customFeeNum}` 
+        : `each student's assigned monthly fee`;
+
     const confirmMsg = targetClass === "ALL" 
-        ? "Add monthly fee to EVERY student in the school?" 
-        : `Add monthly fee ONLY to students in ${targetClass}?`;
+        ? `Apply ${feeDescription} to EVERY student in the school?` 
+        : `Apply ${feeDescription} ONLY to all students in ${targetClass}?`;
 
     if (!confirm(confirmMsg)) return;
 
     const projects = [db, dbSecondary];
     let updatedCount = 0;
 
-    for (const p of projects) {
-        const snap = await p.collection("students").get();
-        const batch = p.batch();
-        
-        snap.forEach(doc => {
-            const s = doc.data() || {};
-            const nameKey = (s.name || "").toUpperCase();
-            const mappedInfo = studentDetailsMap[nameKey] || {};
-            const stClass = s.class || mappedInfo.class || "Unassigned";
+    try {
+        for (const p of projects) {
+            const snap = await p.collection("students").get();
+            const batch = p.batch();
+            
+            snap.forEach(doc => {
+                const s = doc.data() || {};
+                const nameKey = (s.name || "").toUpperCase();
+                const mappedInfo = studentDetailsMap[nameKey] || {};
+                const stClass = s.class || mappedInfo.class || "Unassigned";
 
-            if (targetClass === "ALL" || stClass === targetClass) {
-                batch.update(doc.ref, { 
-                    amount: (s.amount || 0) + (s.monthlyFee || 0), 
-                    isPaid: false 
-                });
-                updatedCount++;
-            }
-        });
-        await batch.commit();
+                if (targetClass === "ALL" || stClass === targetClass) {
+                    const feeToAdd = isCustom ? customFeeNum : (s.monthlyFee || 0);
+                    
+                    batch.update(doc.ref, { 
+                        amount: (s.amount || 0) + feeToAdd, 
+                        isPaid: false 
+                    });
+                    updatedCount++;
+                }
+            });
+            await batch.commit();
+        }
+
+        alert(`✅ Monthly billing successfully applied to ${updatedCount} student(s) in ${targetClass}!`);
+        closeBillingModal();
+        loadAllData();
+    } catch (e) {
+        alert("Error applying monthly bills: " + e.message);
     }
-
-    alert(`Monthly billing applied to ${updatedCount} students (${targetClass}).`);
-    closeBillingModal();
-    loadAllData();
 }
 
 // EXPORT TO SHEETS
@@ -818,9 +871,3 @@ function sendInvoice(type) {
         window.location.href = `sms:${formattedPhone}?body=${encodeURIComponent(smsMsg)}`;
     }
 }
-
-// INITIALIZATION
-window.onload = async () => {
-    await loadClassMap();
-    await loadAllData();
-};
